@@ -1,0 +1,173 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Excel Processing</title>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.16.9/xlsx.full.min.js"></script>
+    <style>
+        table {
+            width: 100%;
+            border-collapse: collapse;
+        }
+        table, th, td {
+            border: 1px solid black;
+        }
+        th, td {
+            padding: 8px;
+            text-align: left;
+        }
+    </style>
+</head>
+<body>
+    <h1>Upload Excel File</h1>
+    <input type="file" id="upload" />
+    <button onclick="processFile()">Process File</button>
+
+    <h2>Processed Data</h2>
+    <div id="result"></div>
+
+    <script>
+        function processFile() {
+            const fileInput = document.getElementById('upload');
+            if (!fileInput.files.length) {
+                alert("Please upload an Excel file.");
+                return;
+            }
+
+            const file = fileInput.files[0];
+            const reader = new FileReader();
+
+            reader.onload = function (e) {
+                const data = new Uint8Array(e.target.result);
+                const workbook = XLSX.read(data, { type: 'array' });
+                const sheetName = workbook.SheetNames[0];
+                const worksheet = XLSX.utils.sheet_to_json(workbook.Sheets[sheetName], { header: 1 });
+
+                console.log('Worksheet data:', worksheet);
+
+                // Function to convert Excel date and time to JavaScript Date object
+                function parseExcelDate(excelDate) {
+                    return new Date((excelDate - (25567 + 2)) * 86400 * 1000);
+                }
+
+                // Process the data
+                const result = {};
+                const timeEntries = {};
+
+                worksheet.forEach(row => {
+                    const name = row[0];
+                    const excelDateTime = row[1];
+
+                    if (typeof excelDateTime !== 'number') {
+                        return; // Skip rows without valid dateTime
+                    }
+
+                    const dateTime = parseExcelDate(excelDateTime);
+                    const date = dateTime.toISOString().split('T')[0];
+
+                    if (!timeEntries[name]) timeEntries[name] = {};
+                    if (!timeEntries[name][date]) timeEntries[name][date] = [];
+                    timeEntries[name][date].push(dateTime);
+                });
+
+                // Calculate hours and minutes worked and mark attendance days >= 8 hours
+                const attendanceSummary = {};
+
+                Object.keys(timeEntries).forEach(name => {
+                    if (!result[name]) result[name] = {};
+                    attendanceSummary[name] = { totalDays: 0, over8HoursDays: 0 };
+
+                    Object.keys(timeEntries[name]).forEach(date => {
+                        const times = timeEntries[name][date].sort((a, b) => a - b);
+
+                        const start = times[0]; // First entry (check-in)
+                        const end = times[times.length - 1]; // Last entry (check-out)
+                        
+                        const totalMinutes = (end - start) / (1000 * 60);
+
+                        const hours = Math.floor(totalMinutes / 60);
+                        const minutes = Math.floor(totalMinutes % 60);
+                        result[name][date] = `${hours}h ${minutes}m`;
+
+                        // Check if worked >= 8 hours
+                        if (totalMinutes >= 360) {
+                            attendanceSummary[name].over8HoursDays += 1;
+                        }
+
+                        attendanceSummary[name].totalDays += 1;
+                    });
+                });
+
+                console.log('Processed result:', result);
+
+                // Determine the unique dates
+                const dates = new Set();
+                Object.values(result).forEach(dateEntries => {
+                    Object.keys(dateEntries).forEach(date => dates.add(date));
+                });
+                const sortedDates = Array.from(dates).sort();
+
+                // Create a new worksheet with names as rows and dates as columns
+                const newWorksheet = [['Name', ...sortedDates, 'Total Days', 'Days >= 6 Hours']];
+                Object.keys(result).forEach(name => {
+                    const row = [name];
+                    sortedDates.forEach(date => {
+                        row.push(result[name][date] ? result[name][date] : '0h 0m');
+                    });
+                    // Add total attendance and 8+ hour days
+                    row.push(attendanceSummary[name].totalDays);
+                    row.push(attendanceSummary[name].over8HoursDays);
+                    newWorksheet.push(row);
+                });
+
+                console.log('New worksheet:', newWorksheet);
+
+                // Create a new workbook and add the new worksheet
+                const newWorkbook = XLSX.utils.book_new();
+                XLSX.utils.book_append_sheet(newWorkbook, XLSX.utils.aoa_to_sheet(newWorksheet), 'Sheet1');
+
+                // Generate a new Excel file
+                XLSX.writeFile(newWorkbook, 'processed_file.xlsx');
+
+                // Display the data on the screen
+                displayResult(newWorksheet);
+            };
+
+            reader.readAsArrayBuffer(file);
+        }
+
+        function displayResult(data) {
+            const resultDiv = document.getElementById('result');
+            const table = document.createElement('table');
+            const thead = document.createElement('thead');
+            const tbody = document.createElement('tbody');
+
+            // Create table header
+            const headerRow = document.createElement('tr');
+            data[0].forEach(header => {
+                const th = document.createElement('th');
+                th.textContent = header;
+                headerRow.appendChild(th);
+            });
+            thead.appendChild(headerRow);
+
+            // Create table body
+            data.slice(1).forEach(row => {
+                const tr = document.createElement('tr');
+                row.forEach(cell => {
+                    const td = document.createElement('td');
+                    td.textContent = cell;
+                    tr.appendChild(td);
+                });
+                tbody.appendChild(tr);
+            });
+
+            table.appendChild(thead);
+            table.appendChild(tbody);
+            resultDiv.innerHTML = '';
+            resultDiv.appendChild(table);
+        }
+    </script>
+</body>
+</html>
